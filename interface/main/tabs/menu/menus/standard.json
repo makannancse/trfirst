@@ -28,6 +28,13 @@
     ]
   },
   {
+    "label": "Uploads",
+    "menu_id": "uplo",
+    "target": "msc",
+    "url": "/interface/uploads/uploads.php",
+    "requirement": 0  
+  },
+  {
     "label": "Flow",
     "menu_id": "pfb0",
     "target": "flb",

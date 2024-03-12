@@ -134,7 +134,7 @@ class Header
     public static function getFavIcon()
     {
         $logoService = new LogoService();
-        $icon = $logoService->getLogo("core/favicon/", "favicon.ico");
+        $icon = $logoService->getLogo("core/favicon/", "favicon11.ico");
         return $icon;
     }
 

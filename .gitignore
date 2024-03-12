@@ -1,0 +1,16 @@
+
+# ccda service build
+ccdaservice/node_modules
+
+# dev editor configs
+/.idea/*
+/.vscode/*
+/nbproject/*
+.DS_Store
+.buildpath
+.project
+.settings
+
+# testing
+.phpunit.result.cache
+coverage/js-unit

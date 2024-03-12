@@ -28,32 +28,13 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 
-if(isset($_POST['submit'])){
-$uploadfile = $_POST['fileInput'];
+if (isset($_SESSION['pid']) && !empty($_SESSION['pid'])) {
+    $pid = $_SESSION['pid'];
+} 
+$patient_data =sqlQuery("SELECT * FROM patient_data where pid ='$pid'");
+if(isset($_GET['uploads'])){
+$uploadfile = $_POST['filename'];
 $excel_ecategory_Name = $uploadfile;
-$category_spreadsheet = IOFactory::load($excel_ecategory_Name);
-$category_sheet = $category_spreadsheet->getActiveSheet();
-$data = [];
-
-foreach ($category_sheet->getRowIterator() as $crow) {
-    $crowData = [];
-    $cellIterator = $crow->getCellIterator();
-    $cellIterator->setIterateOnlyExistingCells(false);
-    $cellCount = 0;
-    foreach ($cellIterator as $cell) {
-        if ($cellCount >= 2) {
-            break; //
-        }
-        $crowData[] = $cell->getValue();
-        $cellCount++;
-    }
-    if (count($crowData) === 2) {
-        $upload_category_data[] = $crowData;
-    }
-}
-array_shift($upload_category_data);
-
-$excel_ecategory_Name = 'Neuro.xlsx';
 $category_spreadsheet = IOFactory::load($excel_ecategory_Name);
 $category_sheet = $category_spreadsheet->getActiveSheet();
 $data = [];
@@ -75,12 +56,30 @@ foreach ($category_sheet->getRowIterator() as $crow) {
     }
 }
 array_shift($excel_category_data);
-// print_r($excel_category_data); 
-// die();
-// echo '<br>';
-// print_r($upload_category_data);
-}
 
+$estGFRValue = null;
+
+foreach ($excel_category_data as $item) {
+    if ($item[0] === 'EST GFR Whole Blood') {
+        $estGFRValue = $item[1];
+        break; // Stop the loop once the category is found
+    }
+}
+$query =sqlQuery("SELECT * FROM form_vitals where pid ='$pid' order by `id` DESC");
+$bmi = $query['BMI'];
+$dob =$patient_data['DOB'];
+$currentDate = new DateTime();
+$dateOfBirth = new DateTime($dob);
+$age = $currentDate->diff($dateOfBirth)->y;
+if ($estGFRValue <= 20 && $age <= 80 && $bmi <= 41) {
+    $modalContent = "is Eligible";
+} else {
+    $modalContent = "is Not Eligible";
+}
+header('Content-Type: application/json');
+echo json_encode(array('status' => $modalContent, 'uploadFile' => $uploadfile)); 
+exit();
+}
 
 ?>
 
@@ -94,49 +93,119 @@ array_shift($excel_category_data);
 <body>
     <br>
    <h3 style='text-align:center;'>Uploads & Review</h3>
-   <form method='post' action=''>
+  
 <div class="container">
 <button type="button" id='upload' class="btn btn-primary btn-sm">Upload File</button>
-<input type="file" id="fileInput" name="fileInput" style="display: none;" accept=".xlsx, .xls">
+<input type="file" id="fileInput"  name="fileInput" style="display: none;" accept=".xlsx, .xls">
 <button type="button" class="btn btn-secondary btn-sm">Review</button>
-  </div>
   <br>
-  <input type='submit' style='margin-left:85px;' name='submit'>
-</form>
-<?php echo $uploadfile;?>
-<?php
-function compareData($excel_category_data, $upload_category_data) {
-    $comparisonResults = [];
+  <!-- <input type='submit' style='margin-left:85px;' name='submit'> -->
 
-    foreach ($excel_category_data as $index => $category) {
-        $categoryName = $category[0];
-        $value1 = $category[1];
-        $value2 = $upload_category_data[$index][1]; // Assuming both sets have the same categories in the same order
+  <label id="uploadFile" style="font-size:bold;text-align:center;"></label>
 
-        if ($value2 > $value1) {
-            $comparisonResults[$categoryName] = "higher";
-        } elseif ($value2 < $value1) {
-            $comparisonResults[$categoryName] = "lower";
-        } else {
-            $comparisonResults[$categoryName] = "equal";
-        }
-    }
 
-    return $comparisonResults;
-}
+<!-- Modal -->
+<div class="modal fade" id="exampleModal" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel" aria-hidden="true" data-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered" role="document" style="max-width: 350px;margin-top:20px;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6>Eligibility Status</h6>
+        <!-- Close button -->
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <h5 id='status' style='text-align:center;'><?php echo $patient_data['fname'];?>&nbsp;&nbsp;<span id="modalStatus"></span>!!</h5>
+       
+        <div id='refer'>
+          <p id='refer'>Refer to the nearest center ?</p>
+          <input type='checkbox' name='yes' id='yescheckbox' class="check" value='yes'> Yes &nbsp;&nbsp;
+          <input type='checkbox' name='no' id='nocheckbox' class="check" value='no'> No
 
-$comparisonResults = compareData($excel_category_data, $upload_category_data);
-
-foreach ($comparisonResults as $category => $result) {
-    // $query=sqlStatement("INSERT INTO `uploads`(category,result) VALUES ('$category','$result')");
-    // echo "$category :$result <br>";
-}
+          <?php
+          $sql = sqlQuery("SELECT * FROM `facility` where city !='' order by rand() limit 1");
+          
 ?>
+<div id ="near_loc" style = "display:none;text-align:center;">
+<br>
+<i class = "fa fa-location"></i><?php echo $sql['name']; ?>
+<br><?php echo $sql['street'].' ,'.$sql['city'].' ,'.$sql['state'].' ,'.$sql['country_code']; ?>
+</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 </body>
 <script>
-    $(document).ready(function() {
-      $('#upload').click(function() {
-        $('#fileInput').click();
-      });
+$(document).ready(function() {
+
+    $('#upload').click(function() {
+
+        var pid = <?php echo $pid; ?>;
+        if (pid !== 0 && pid !== '') { 
+            $('#fileInput').click();
+        } else {
+            alert('Please select Patient');
+          
+        }
     });
-  </script>
+
+    $('#yescheckbox').change(function() {
+        if ($(this).is(':checked')) {
+            $('#nocheckbox').prop('checked', false);
+        }
+    });
+
+    $('#nocheckbox').change(function() {
+        if ($(this).is(':checked')) {
+            $('#yescheckbox').prop('checked', false);
+        }
+    });
+});
+
+
+$('#fileInput').change(function() {
+        var filename = $(this).val().split('\\').pop();
+       
+        $.ajax({
+            url: 'uploads.php?uploads', 
+            type: 'POST',
+            data: {filename: filename}, 
+            success: function(response) {
+                $('#modalStatus').text(response.status);
+                $('#uploadFile').text(response.uploadFile);
+                if (response.status !== 'is Eligible') {
+                $('#refer').hide();
+                $("#status").css("color","#e82a1c");
+                $('#exampleModal').modal('show');
+                setTimeout(function() {
+                    $('#exampleModal').modal('hide');
+                }, 4000); 
+                 }else{
+                $('#refer').show();
+                $('#exampleModal').modal('show'); 
+                $("#status").css("color","#4caf50");
+            }
+            },
+            error: function(xhr, status, error) {
+                console.error(xhr.responseText);
+            }
+        });
+    });
+
+$(".check").change(function(){
+    if ($(this).is(':checked')) {
+     var id = $(this).attr('id');
+    if( id == 'yescheckbox'){
+        $('#near_loc').show();
+    }else{       
+        // $('#exampleModal').modal('hide'); 
+        $('.close').trigger('click');
+        $('form')[0].reset();
+    }
+}
+})
+</script>
+

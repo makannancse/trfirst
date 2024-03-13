@@ -32,12 +32,15 @@ if (isset($_SESSION['pid']) && !empty($_SESSION['pid'])) {
     $pid = $_SESSION['pid'];
 } 
 $patient_data =sqlQuery("SELECT * FROM patient_data where pid ='$pid'");
-if(isset($_GET['uploads'])){
-$uploadfile = $_POST['filename'];
-$excel_ecategory_Name = $uploadfile;
-$category_spreadsheet = IOFactory::load($excel_ecategory_Name);
-$category_sheet = $category_spreadsheet->getActiveSheet();
-$data = [];
+
+if(isset($_FILES['fileInput']['name'])){
+    $filename = $_FILES['fileInput']['name'];
+    $temp = $_FILES['fileInput']['tmp_name'];
+    $newfilename = $temp;
+    $excel_ecategory_Name = $newfilename;
+    $category_spreadsheet = IOFactory::load($excel_ecategory_Name);
+    $category_sheet = $category_spreadsheet->getActiveSheet();
+    $data = [];
 
 foreach ($category_sheet->getRowIterator() as $crow) {
     $crowData = [];
@@ -57,12 +60,14 @@ foreach ($category_sheet->getRowIterator() as $crow) {
 }
 array_shift($excel_category_data);
 
+
+
 $estGFRValue = null;
 
 foreach ($excel_category_data as $item) {
     if ($item[0] === 'EST GFR Whole Blood') {
         $estGFRValue = $item[1];
-        break; // Stop the loop once the category is found
+        break; 
     }
 }
 $query =sqlQuery("SELECT * FROM form_vitals where pid ='$pid' order by `id` DESC");
@@ -71,13 +76,18 @@ $dob =$patient_data['DOB'];
 $currentDate = new DateTime();
 $dateOfBirth = new DateTime($dob);
 $age = $currentDate->diff($dateOfBirth)->y;
+if($estGFRValue == null){
+    $modalContent = "EST GFR Whole Blood value not found in the Excel sheet";
+}
+else{
 if ($estGFRValue <= 20 && $age <= 80 && $bmi <= 41) {
     $modalContent = "is Eligible";
 } else {
     $modalContent = "is Not Eligible";
 }
+}
 header('Content-Type: application/json');
-echo json_encode(array('status' => $modalContent, 'uploadFile' => $uploadfile)); 
+echo json_encode(array('status' => $modalContent, 'uploadFile' => $filename)); 
 exit();
 }
 
@@ -99,44 +109,56 @@ exit();
 <input type="file" id="fileInput"  name="fileInput" style="display: none;" accept=".xlsx, .xls">
 <button type="button" class="btn btn-secondary btn-sm">Review</button>
   <br>
-  <!-- <input type='submit' style='margin-left:85px;' name='submit'> -->
-
   <label id="uploadFile" style="font-size:bold;text-align:center;"></label>
-
 
 <!-- Modal -->
 <div class="modal fade" id="exampleModal" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel" aria-hidden="true" data-backdrop="static">
-  <div class="modal-dialog modal-dialog-centered" role="document" style="max-width: 350px;margin-top:20px;">
+  <div class="modal-dialog modal-dialog-centered" role="document" style="max-width: 350px;margin-top:40px;">
     <div class="modal-content">
       <div class="modal-header">
-        <h6>Eligibility Status</h6>
+        <h6 style='font-weight:bold;'>Eligibility Status</h6>
         <!-- Close button -->
         <button type="button" class="close" data-dismiss="modal" aria-label="Close">
           <span aria-hidden="true">&times;</span>
         </button>
       </div>
       <div class="modal-body">
-        <h5 id='status' style='text-align:center;'><?php echo $patient_data['fname'];?>&nbsp;&nbsp;<span id="modalStatus"></span>!!</h5>
+        <h5 id='status' style='text-align:center;'><?php echo $patient_data['fname'];?>&nbsp;<span id="modalStatus"></span>!!</h5>
        
         <div id='refer'>
           <p id='refer'>Refer to the nearest center ?</p>
-          <input type='checkbox' name='yes' id='yescheckbox' class="check" value='yes'> Yes &nbsp;&nbsp;
-          <input type='checkbox' name='no' id='nocheckbox' class="check" value='no'> No
+          <button name='yes' id='yescheckbox' class="btn btn-success check" value='yes'> Yes </button>
+          <button name='no' id='nocheckbox' class="btn btn-danger check" value='no'> No</button>
+        </div>
 
           <?php
           $sql = sqlQuery("SELECT * FROM `facility` where city !='' order by rand() limit 1");
           
 ?>
-<div id ="near_loc" style = "display:none;text-align:center;">
+<div id ="near_loc" style = "display:none;text-align:center;font-weight:bold;margin-top:-15px;">
+<button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
 <br>
 <i class = "fa fa-location"></i><?php echo $sql['name']; ?>
 <br><?php echo $sql['street'].' ,'.$sql['city'].' ,'.$sql['state'].' ,'.$sql['country_code']; ?>
+<br>
+<button id='ok_button' class='btn btn-primary'>Okay</button>
 </div>
-        </div>
+
+<div class="d-flex justify-content-center">
+  <div id="loader" style="display:none;" class="spinner-border" role="status">
+    <span class="sr-only">Loading...</span>
+  </div>
+</div>
+
+<div id="success_message" style="display:none;text-align:center;font-weight: bold; color:#4caf50;">Nearest Center Location Successfully Referred!</div>
       </div>
     </div>
   </div>
 </div>
+
+
 </body>
 <script>
 $(document).ready(function() {
@@ -152,41 +174,47 @@ $(document).ready(function() {
         }
     });
 
-    $('#yescheckbox').change(function() {
-        if ($(this).is(':checked')) {
-            $('#nocheckbox').prop('checked', false);
-        }
-    });
-
-    $('#nocheckbox').change(function() {
-        if ($(this).is(':checked')) {
-            $('#yescheckbox').prop('checked', false);
-        }
-    });
 });
 
 
 $('#fileInput').change(function() {
-        var filename = $(this).val().split('\\').pop();
+       var fileData = $('#fileInput').prop('files')[0];
+        var formData = new FormData();
+        formData.append('fileInput', fileData);
        
         $.ajax({
-            url: 'uploads.php?uploads', 
+            url: 'uploads.php', 
             type: 'POST',
-            data: {filename: filename}, 
+            data: formData,
+            contentType: false, // Set content type to false
+            processData: false, // Don't process the data
             success: function(response) {
                 $('#modalStatus').text(response.status);
                 $('#uploadFile').text(response.uploadFile);
-                if (response.status !== 'is Eligible') {
-                $('#refer').hide();
-                $("#status").css("color","#e82a1c");
-                $('#exampleModal').modal('show');
-                setTimeout(function() {
-                    $('#exampleModal').modal('hide');
-                }, 4000); 
+
+                if(response.status == 'EST GFR Whole Blood value not found in the Excel sheet'){
+                    $('#exampleModal').modal('show');
+                    $('#refer').hide();
+                    $("#status").css("color","#e82a1c");
+                    $('#exampleModal').modal('show');
+                    setTimeout(function() {
+                        $('#exampleModal').modal('hide');
+                        window.location.reload();
+                    }, 4000); 
+                    
+                }
+                else if (response.status !== 'is Eligible') {
+                    $('#refer').hide();
+                    $("#status").css("color","#e82a1c");
+                    $('#exampleModal').modal('show');
+                    setTimeout(function() {
+                        $('#exampleModal').modal('hide');
+                        window.location.reload();
+                    }, 4000); 
                  }else{
-                $('#refer').show();
-                $('#exampleModal').modal('show'); 
-                $("#status").css("color","#4caf50");
+                    $('#refer').show();
+                    $('#exampleModal').modal('show'); 
+                    $("#status").css("color","#4caf50");
             }
             },
             error: function(xhr, status, error) {
@@ -195,17 +223,40 @@ $('#fileInput').change(function() {
         });
     });
 
-$(".check").change(function(){
-    if ($(this).is(':checked')) {
-     var id = $(this).attr('id');
-    if( id == 'yescheckbox'){
+
+$('#ok_button').click(function() {
+    $('#near_loc').hide();
+    $('#loader').show();
+    $(this).hide();
+    var loaderDuration = 2000; 
+    var successDuration = 4000; 
+    var totalDuration = loaderDuration + successDuration;
+    setTimeout(function() {
+        $('#loader').hide();
+        $('#success_message').show();
+        setTimeout(function() {
+            $('#exampleModal').modal('hide');
+            // Reload the page after hiding the modal
+            window.location.reload();
+        }, successDuration);
+    }, loaderDuration);
+});
+$(".close").click(function(){
+    window.location.reload();
+});
+$(".check").click(function() {
+    var id = $(this).attr('id');
+    if (id == 'yescheckbox') {
         $('#near_loc').show();
-    }else{       
-        // $('#exampleModal').modal('hide'); 
+        $('#status').hide();
+        $('#refer').hide();
+        $('.modal-header').hide();
+    } else {
         $('.close').trigger('click');
-        $('form')[0].reset();
+        // $('form')[0].reset();
+        window.location.reload(); // Reload the page
     }
-}
-})
+});
+
 </script>
 

@@ -22,6 +22,7 @@
  */
 
 require_once("../../globals.php");
+require_once("$srcdir/lists.inc.php");
 require_once("$srcdir/patient.inc.php");
 require_once("$srcdir/options.inc.php");
 require_once("../history/history.inc.php");
@@ -46,22 +47,22 @@ use OpenEMR\Menu\PatientMenuRole;
 use OpenEMR\OeUI\OemrUI;
 use OpenEMR\Patient\Cards\PortalCard;
 use OpenEMR\Reminder\BirthdayReminder;
+use OpenEMR\Services\AllergyIntoleranceService;
+use OpenEMR\Services\ConditionService;
+use OpenEMR\Services\ImmunizationService;
+use OpenEMR\Services\PatientIssuesService;
+use OpenEMR\Services\PatientService;
 use Symfony\Component\EventDispatcher\EventDispatcher;
 
 $twig = new TwigContainer(null, $GLOBALS['kernel']);
-if(isset($_GET['change_patient_status'])){
-    $patient_status=$_POST['patient_status'];
-    $pid=$_POST['pid'];
-    $response=($patient_status=='active'?'Inactive':'Active');
-    sqlStatement("UPDATE patient_data SET patient_status='".$patient_status."' Where pid='".$pid."'");
-    echo $response;
-    exit();
-}
 
 // Set session for pid (via setpid). Also set session for encounter (if applicable)
 if (isset($_GET['set_pid'])) {
     require_once("$srcdir/pid.inc.php");
     setpid($_GET['set_pid']);
+    $ptService = new PatientService();
+    $newPatient = $ptService->findByPid($pid);
+    $ptService->touchRecentPatientList($newPatient);
     if (isset($_GET['set_encounterid']) && ((int)$_GET['set_encounterid'] > 0)) {
         $encounter = (int)$_GET['set_encounterid'];
         SessionUtil::setSession('encounter', $encounter);
@@ -329,25 +330,19 @@ if (!empty($result3['provider'])) {   // Use provider in case there is an ins re
     $insco_name = getInsuranceProvider($result3['provider']);
 }
 
-$patient_type=$result['patient_status']&&$result['patient_status']=='active'?'Inactive':'Active';
-$patient_status=$result['patient_status']&&$result['patient_status']=='active'?'inactive':'active';
 $arrOeUiSettings = array(
     'page_id' => 'core.mrd',
     'heading_title' => xl('Medical Record Dashboard'),
     'include_patient_name' => true,
     'expandable' => true,
-    'expandable_files' => array(), //all file names need suffix _xpd
+    'expandable_files' => array('demographics_xpd'), //all file names need suffix _xpd
     'action' => "", //conceal, reveal, search, reset, link or back
     'action_title' => "",
     'action_href' => "", //only for actions - reset, link or back
     'show_help_icon' => true,
-    'help_file_name' => "medical_dashboard_help.php",
-    'patient_active_button'=>'<button class="btn btn-primary btn-sm" id="patient_active_button" value="'.$patient_status.'">'.$patient_type.'</button>'
+    'help_file_name' => "medical_dashboard_help.php"
 );
 $oemr_ui = new OemrUI($arrOeUiSettings);
-
-
-
 $shouldAlert = ($pid == 0 || $pid == 1 || $pid == 2);
 
 ?>
@@ -355,16 +350,12 @@ $shouldAlert = ($pid == 0 || $pid == 1 || $pid == 2);
 <html>
 
 <head>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
-
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.all.min.js"></script>
-
     <?php
-    Header::setupHeader(['common']);
+    Header::setupHeader(['common','utility']);
     require_once("$srcdir/options.js.php");
-    
     ?>
-    
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.all.min.js"></script>
     <script>
 
 $(document).ready(function() {
@@ -392,11 +383,6 @@ $(document).ready(function() {
     }
 });
 
-    
-   
-
-        
-        // Process click on diagnosis for referential cds popup.
         function referentialCdsClick(codetype, codevalue) {
             top.restoreSession();
             // Force a new window instead of iframe to address cross site scripting potential
@@ -529,6 +515,7 @@ $(document).ready(function() {
                 dialogId: 'editscripts',
                 type: 'iframe'
             });
+            return false;
         }
 
         /**
@@ -596,6 +583,7 @@ $(document).ready(function() {
                 $soap_status = sqlStatement("select soap_import_status,pid from patient_data where pid=? and soap_import_status in ('1','3')", array($pid));
                 while ($row_soapstatus = sqlFetchArray($soap_status)) { ?>
                     top.restoreSession();
+                    let reloadRequired = false;
                     $.ajax({
                         type: "POST",
                         url: "../../soap_functions/soap_patientfullmedication.php",
@@ -605,7 +593,9 @@ $(document).ready(function() {
                         },
                         async: false,
                         success: function(thedata) {
-                            //alert(thedata);
+                            if (!thedata.includes("Nothing")) {
+                                reloadRequired = true;
+                            }
                             msg_updation += thedata;
                         },
                         error: function() {
@@ -623,13 +613,20 @@ $(document).ready(function() {
                         },
                         async: false,
                         success: function(thedata) {
-                            //alert(thedata);
-                            msg_updation += thedata;
+                            if (!thedata.includes("Nothing")) {
+                                reloadRequired = true;
+                            }
+                            msg_updation += "\n" + thedata;
                         },
                         error: function() {
                             alert('ajax error');
                         }
                     });
+
+                    if (reloadRequired) {
+                        document.location.reload();
+                    }
+
                     <?php
                     if ($GLOBALS['erx_import_status_message']) { ?>
                         if (msg_updation)
@@ -641,7 +638,11 @@ $(document).ready(function() {
             ?>
 
             // load divs
-            placeHtml("stats.php", "stats_div", true);
+            placeHtml("stats.php", "stats_div", true).then(() => {
+                $('[data-toggle="collapse"]').on('click', function (e) {
+                    updateUserVisibilitySetting(e);
+                });
+            });
             placeHtml("pnotes_fragment.php", 'pnotes_ps_expand').then(() => {
                 // must be delegated event!
                 $(this).on("click", ".complete_btn", function() {
@@ -847,11 +848,6 @@ $(document).ready(function() {
             <?php } elseif ($active_reminders || $all_allergy_alerts) { ?>
                 openReminderPopup();
             <?php } ?>
-
-            // $(".card-title").on('click', "button", (e) => {
-            //     console.debug("click");
-            //     updateUserVisibilitySetting(e);
-            // });
         });
 
         /**
@@ -867,30 +863,33 @@ $(document).ready(function() {
             const targetID = e.target.getAttribute("data-target");
             const target = document.querySelector(targetID);
             const targetStr = targetID.substring(1);
-
+            // test ensure at least an element we want.
+            if (target.classList.contains("collapse")) {
+                // who is icon. Easier to catch BS event than create one specific for this decision..
+                // Should always be icon target
+                let iconTarget = e.target.children[0] || e.target;
+                // toggle
+                if (iconTarget.classList.contains("fa-expand")) {
+                    iconTarget.classList.remove('fa-expand');
+                    iconTarget.classList.add('fa-compress');
+                }
+                else {
+                    iconTarget.classList.remove('fa-compress');
+                    iconTarget.classList.add('fa-expand');
+                }
+            }
             let formData = new FormData();
             formData.append("csrf_token_form", <?php echo js_escape(CsrfUtils::collectCsrfToken()); ?>);
             formData.append("target", targetStr);
             formData.append("mode", (target.classList.contains("show")) ? 0 : 1);
-
+            top.restoreSession();
             const response = await fetch("../../../library/ajax/user_settings.php", {
                 method: "POST",
                 credentials: 'same-origin',
                 body: formData,
             });
 
-            const update = await response.text();
-            return update;
-        }
-
-        // Update the User's visibility setting when the card header is clicked
-        function cardTitleButtonClickListener() {
-            const buttons = document.querySelectorAll(".card-title a[data-toggle='collapse']");
-            buttons.forEach((b) => {
-                b.addEventListener("click", (e) => {
-                    updateUserVisibilitySetting(e);
-                });
-            });
+            return await response.text();
         }
 
         // JavaScript stuff to do when a new patient is set.
@@ -898,11 +897,6 @@ $(document).ready(function() {
         function setMyPatient() {
             <?php
             if (isset($_GET['set_pid'])) {
-                $status=1;
-                if(isset($_GET['cosign']))
-                {
-                    $status=0;  
-                }
                 $date_of_death = is_patient_deceased($pid);
                 if (!empty($date_of_death)) {
                     $date_of_death = $date_of_death['date_deceased'];
@@ -914,7 +908,7 @@ $(document).ready(function() {
                     echo js_escape(" " . xl('DOB') . ": " . oeFormatShortDate($result['DOB_YMD']) . " " . xl('Age') . ": " . getPatientAgeDisplay($result['DOB_YMD']));
                 } else {
                     echo js_escape(" " . xl('DOB') . ": " . oeFormatShortDate($result['DOB_YMD']) . " " . xl('Age at death') . ": " . oeFormatAge($result['DOB_YMD'], $date_of_death));
-                } ?>,<?php echo js_escape($status)?>);
+                } ?>);
                 var EncounterDateArray = new Array;
                 var CalendarCategoryArray = new Array;
                 var EncounterIdArray = new Array;
@@ -951,10 +945,6 @@ $(document).ready(function() {
         $(window).on('load', function() {
             setMyPatient();
         });
-
-        document.addEventListener("DOMContentLoaded", () => {
-            cardTitleButtonClickListener();
-        });
     </script>
 
     <style>
@@ -963,6 +953,13 @@ $(document).ready(function() {
             box-shadow: 1px 1px 1px hsl(0 0% 0% / .2);
             border-radius: 0;
         }
+
+        /* Short term fix. This ensures the problem list, allergies, medications, and immunization cards handle long lists without interuppting
+           the UI. This should be configurable and should go in a more appropriate place
+        .pami-list {
+            max-height: 200px;
+            overflow-y: scroll;
+        } */
 
         <?php
         if (!empty($GLOBALS['right_justify_labels_demographics']) && ($_SESSION['language_direction'] == 'ltr')) { ?>
@@ -1064,12 +1061,181 @@ $(document).ready(function() {
             $idcard_doc_id = get_document_by_catg($pid, $GLOBALS['patient_id_category_name'], 3);
         }
         ?>
-        <div class="main mb-5">
+        <div class="main mb-1">
             <!-- start main content div -->
+            <div class="form-row">
+                    <?php
+                    $t = $twig->getTwig();
+
+                    $allergy = (AclMain::aclCheckIssue('allergy')) ? 1 : 0;
+                    $pl = (AclMain::aclCheckIssue('medical_problem')) ? 1 : 0;
+                    $meds = (AclMain::aclCheckIssue('medication')) ? 1 : 0;
+                    $rx = (!$GLOBALS['disable_prescriptions'] && AclMain::aclCheckCore('patients', 'rx')) ? 1 : 0;
+                    $cards = max(1, ($allergy + $pl + $meds));
+                    $col = "p-1 ";
+                    $colInt = 12 / $cards;
+                    $col .= "col-md-" . $colInt;
+
+                    /**
+                     * Helper function to return only issues with an outcome not equal to resolved
+                     *
+                     * @param array $i An array of issues
+                     * @return array
+                     */
+                    function filterActiveIssues(array $i): array
+                    {
+                        return array_filter($i, function ($_i) {
+                            return ($_i['outcome'] != 1) && (empty($_i['enddate']) || (strtotime($_i['enddate']) > strtotime('now')));
+                        });
+                    }
+
+                    // ALLERGY CARD
+                    if ($allergy === 1) {
+                        $allergyService = new AllergyIntoleranceService();
+                        $_rawAllergies = filterActiveIssues($allergyService->getAll(['lists.pid' => $pid])->getData());
+                        $id = 'allergy_ps_expand';
+                        $viewArgs = [
+                            'title' => xl('Allergies'),
+                            'card_container_class_list' => ['flex-fill', 'mx-1', 'card'],
+                            'id' => $id,
+                            'forceAlwaysOpen' => false,
+                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
+                            'linkMethod' => "javascript",
+                            'list' => $_rawAllergies,
+                            'listTouched' => (!empty(getListTouch($pid, 'allergy'))) ? true : false,
+                            'auth' => true,
+                            'btnLabel' => 'Edit',
+                            'btnLink' => "return load_location('{$GLOBALS['webroot']}/interface/patient_file/summary/stats_full.php?active=all&category=allergy')"
+                        ];
+                        echo "<div class=\"$col\">";
+                        echo $t->render('patient/card/allergies.html.twig', $viewArgs);
+                        echo "</div>";
+                    }
+
+                    $patIssueService = new PatientIssuesService();
+
+                    // MEDICAL PROBLEMS CARD
+                    if ($pl === 1) {
+                        $_rawPL = $patIssueService->search(['lists.pid' => $pid, 'lists.type' => 'medical_problem'])->getData();
+                        $id = 'medical_problem_ps_expand';
+                        $viewArgs = [
+                            'title' => xl('Medical Problems'),
+                            'card_container_class_list' => ['flex-fill', 'mx-1', 'card'],
+                            'id' => $id,
+                            'forceAlwaysOpen' => false,
+                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
+                            'linkMethod' => "javascript",
+                            'list' => filterActiveIssues($_rawPL),
+                            'listTouched' => (!empty(getListTouch($pid, 'medical_problem'))) ? true : false,
+                            'auth' => true,
+                            'btnLabel' => 'Edit',
+                            'btnLink' => "return load_location('{$GLOBALS['webroot']}/interface/patient_file/summary/stats_full.php?active=all&category=medical_problem')"
+                        ];
+                        echo "<div class=\"$col\">";
+                        echo $t->render('patient/card/medical_problems.html.twig', $viewArgs);
+                        echo "</div>";
+                    }
+
+                    // MEDICATION CARD
+                    if ($meds === 1) {
+                        $_rawMedList = $patIssueService->search(['lists.pid' => $pid, 'lists.type' => 'medication'])->getData();
+                        $id = 'medication_ps_expand';
+                        $viewArgs = [
+                            'title' => xl('Medications'),
+                            'card_container_class_list' => ['flex-fill', 'mx-1', 'card'],
+                            'id' => $id,
+                            'forceAlwaysOpen' => false,
+                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
+                            'linkMethod' => "javascript",
+                            'list' => filterActiveIssues($_rawMedList),
+                            'listTouched' => (!empty(getListTouch($pid, 'medication'))) ? true : false,
+                            'auth' => true,
+                            'btnLabel' => 'Edit',
+                            'btnLink' => "return load_location('{$GLOBALS['webroot']}/interface/patient_file/summary/stats_full.php?active=all&category=medication')"
+                        ];
+                        echo "<div class=\"$col\">";
+                        echo $t->render('patient/card/medication.html.twig', $viewArgs);
+                        echo "</div>";
+                    }
+
+                    // Render the Prescriptions card if turned on
+                    if ($rx === 1) :
+                        if ($GLOBALS['erx_enable'] && $display_current_medications_below == 1) {
+                            $sql = "SELECT * FROM prescriptions WHERE patient_id = ? AND active = '1'";
+                            $res = sqlStatement($sql, [$pid]);
+
+                            $rxArr = [];
+                            while ($row = sqlFetchArray($res)) {
+                                $row['unit'] = generate_display_field(array('data_type' => '1', 'list_id' => 'drug_units'), $row['unit']);
+                                $row['form'] = generate_display_field(array('data_type' => '1', 'list_id' => 'drug_form'), $row['form']);
+                                $row['route'] = generate_display_field(array('data_type' => '1', 'list_id' => 'drug_route'), $row['route']);
+                                $row['interval'] = generate_display_field(array('data_type' => '1', 'list_id' => 'drug_interval'), $row['interval']);
+                                $rxArr[] = $row;
+                            }
+                            $id = "current_prescriptions_ps_expand";
+                            $viewArgs = [
+                                'title' => xl('Current Medications'),
+                                'id' => $id,
+                                'forceAlwaysOpen' => false,
+                                'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
+                                'auth' => false,
+                                'rxList' => $rxArr,
+                            ];
+
+                            echo $t->render('patient/card/erx.html.twig', $viewArgs);
+                        }
+
+                        $id = "prescriptions_ps_expand";
+                        $viewArgs = [
+                            'title' => xl("Prescriptions"),
+                            'card_container_class_list' => ['flex-fill', 'mx-1', 'card'],
+                            'id' => $id,
+                            'forceAlwaysOpen' => false,
+                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
+                            'btnLabel' => "Edit",
+                            'auth' => AclMain::aclCheckCore('patients', 'rx', '', ['write', 'addonly']),
+                        ];
+
+                        if ($GLOBALS['erx_enable']) {
+                            $viewArgs['title'] = 'Prescription History';
+                            $viewArgs['btnLabel'] = 'Add';
+                            $viewArgs['btnLink'] = "{$GLOBALS['webroot']}/interface/eRx.php?page=compose";
+                        } elseif ($GLOBALS['weno_rx_enable']) {
+                            // weno plus button which opens their iframe
+                            $viewArgs['weno'] = true;
+                            $viewArgs['title'] = "WENO ComposeRx";
+                            $viewArgs['btnLabel'] = 'Add';
+                            $viewArgs['btnLink'] = "{$GLOBALS['webroot']}/interface/weno/indexrx.php";
+                            $viewArgs['btnClass'] = "iframe";
+                            $viewArgs['linkMethod'] = "javascript";
+                            $viewArgs['btnLink'] = "editScripts('{$GLOBALS['webroot']}/controller.php?prescription&list&id=" . attr_url($pid) . "')";
+                        } else {
+                            $viewArgs['btnLink'] = "editScripts('{$GLOBALS['webroot']}/controller.php?prescription&list&id=" . attr_url($pid) . "')";
+                            $viewArgs['linkMethod'] = "javascript";
+                            $viewArgs['btnClass'] = "iframe";
+                        }
+
+                        $cwd = getcwd();
+                        chdir("../../../");
+                        $c = new Controller();
+                        // This is a hacky way to get a Smarty template from the controller and injecting it into
+                        // a Twig template. This reduces the amount of refactoring that is required but ideally the
+                        // Smarty template should be upgraded to Twig
+                        ob_start();
+                        echo $c->act(['prescription' => '', 'fragment' => '', 'patient_id' => $pid]);
+                        $viewArgs['content'] = ob_get_contents();
+                        ob_end_clean();
+
+                        echo "<div class=\"col\">";
+                        echo $t->render('patient/card/rx.html.twig', $viewArgs);
+                        echo "</div>";
+                    endif;
+                    ?>
+                </div>
+            </div>
             <div class="row">
                 <div class="col-md-8">
                     <?php
-
                     if ($deceased > 0) :
                         echo $twig->getTwig()->render('patient/partials/deceased.html.twig', [
                             'deceasedDays' => deceasedDays($deceased),
@@ -1078,8 +1244,6 @@ $(document).ready(function() {
 
                     $sectionRenderEvents = $ed->dispatch(new SectionEvent('primary'), SectionEvent::EVENT_HANDLE);
                     $sectionCards = $sectionRenderEvents->getCards();
-
-                    $t = $twig->getTwig();
 
                     foreach ($sectionCards as $card) {
                         $_auth = $card->getAcl();
@@ -1097,7 +1261,7 @@ $(document).ready(function() {
                         $viewArgs = [
                             'title' => $card->getTitle(),
                             'id' => $card->getIdentifier(),
-                            'initiallyCollapsed' => !$card->isInitiallyCollapsed(),
+                            'initiallyCollapsed' => $card->isInitiallyCollapsed(),
                             'card_bg_color' => $card->getBackgroundColorClass(),
                             'card_text_color' => $card->getTextColorClass(),
                             'forceAlwaysOpen' => !$card->canCollapse(),
@@ -1105,7 +1269,7 @@ $(document).ready(function() {
                             'btnLink' => 'test',
                         ];
 
-                        echo $t->render($card->getTemplateFile(), array_merge($card->getTemplateVariables(), $viewArgs));
+                        echo $t->render($card->getTemplateFile(), array_merge($viewArgs, $card->getTemplateVariables()));
                     }
 
                     if (!$GLOBALS['hide_billing_widget']) :
@@ -1121,7 +1285,7 @@ $(document).ready(function() {
                         $viewArgs = [
                             'title' => xl('Billing'),
                             'id' => $id,
-                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? false : true,
+                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
                             'hideBtn' => true,
                             'patientBalance' => $patientbalance,
                             'insuranceBalance' => $insurancebalance,
@@ -1161,7 +1325,7 @@ $(document).ready(function() {
                             'linkMethod' => "html",
                             'auth' => ACLMain::aclCheckCore('patients', 'demo', '', 'write'),
                             'requireRestore' => (!isset($_SESSION['patient_portal_onsite_two'])) ? true : false,
-                            'initiallyCollapsed' => getUserSetting("demographics_ps_expand") == true ? true : false,
+                            'initiallyCollapsed' => (getUserSetting("demographics_ps_expand") == 0) ? true : false,
                             'tabID' => "DEM",
                             'result' => $result,
                             'result2' => $result2,
@@ -1185,9 +1349,11 @@ $(document).ready(function() {
                         while ($row = sqlFetchArray($res)) {
                             if ($row['provider']) {
                                 // since the query is sorted by DATE DESC can use prior ins type to identify
-                                // until insurance date_end is handled for upgraders must use old logic
-                                //$row['isOld'] = (!empty($row['date_end']) && $row['date_end'] <= date("Y-m-d")) ? true : false;
-                                $row['isOld'] = (strcmp($row['type'], $prior_ins_type) == 0) ? true : false;
+                                // unless insurance date_end is applicable
+                                $row['isOld'] = (!empty($row['date_end']) && $row['date_end'] <= date("Y-m-d")) ? true : false;
+                                if (!$row['isOld']) {
+                                    $row['isOld'] = (strcmp($row['type'], $prior_ins_type) == 0) ? true : false;
+                                }
                                 $icobj = new InsuranceCompany($row['provider']);
                                 $adobj = $icobj->get_address();
                                 $insco_name = trim($icobj->get_name());
@@ -1235,7 +1401,7 @@ $(document).ready(function() {
                             }
                         }
 
-                        if ($GLOBALS["enable_oa"]) {
+                        if ($GLOBALS["enable_eligibility_requests"]) {
                             if (($_POST['status_update'] ?? '') === 'true') {
                                 unset($_POST['status_update']);
                                 $showEligibility = true;
@@ -1269,10 +1435,10 @@ $(document).ready(function() {
                             'btnLabel' => "Edit",
                             'btnLink' => "demographics_full.php",
                             'linkMethod' => 'html',
-                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? false : true,
+                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
                             'ins' => $insArr,
                             'eligibility' => $output,
-                            'enable_oa' => $GLOBALS['enable_oa'],
+                            'enable_eligibility_requests' => $GLOBALS['enable_eligibility_requests'],
                             'auth' => AclMain::aclCheckCore('patients', 'demo', '', 'write'),
                             'prependedInjection' => $dispatchResult->getPrependedInjection(),
                             'appendedInjection' => $dispatchResult->getAppendedInjection(),
@@ -1292,7 +1458,7 @@ $(document).ready(function() {
                             'id' => $id,
                             'btnLabel' => "Edit",
                             'btnLink' => "pnotes_full.php?form_active=1",
-                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? false : true,
+                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
                             'linkMethod' => "html",
                             'bodyClass' => "notab",
                             'auth' => AclMain::aclCheckCore('patients', 'notes', '', 'write'),
@@ -1309,7 +1475,7 @@ $(document).ready(function() {
                         $viewArgs = [
                             'title' => xl('Patient Reminders'),
                             'id' => $id,
-                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? false : true,
+                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
                             'btnLabel' => 'Edit',
                             'btnLink' => '../reminder/patient_reminders.php?mode=simple&patient_id=' . attr_url($pid),
                             'linkMethod' => 'html',
@@ -1330,7 +1496,7 @@ $(document).ready(function() {
                         $viewArgs = [
                             'title' => xl('Disclosures'),
                             'id' => $id,
-                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? false : true,
+                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
                             'btnLabel' => 'Edit',
                             'btnLink' => 'disclosure_full.php',
                             'linkMethod' => 'html',
@@ -1356,7 +1522,7 @@ $(document).ready(function() {
                         $viewArgs = [
                             'title' => xl('Amendments'),
                             'id' => $id,
-                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? false : true,
+                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
                             'btnLabel' => 'Edit',
                             'btnLink' => $GLOBALS['webroot'] . "/interface/patient_file/summary/list_amendments.php?id=" . attr_url($pid),
                             'btnCLass' => '',
@@ -1386,7 +1552,7 @@ $(document).ready(function() {
                         $viewArgs = [
                             'title' => xl('Labs'),
                             'id' => $id,
-                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? false : true,
+                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
                             'btnLabel' => 'Trend',
                             'btnLink' => "../summary/labdata.php",
                             'linkMethod' => 'html',
@@ -1409,7 +1575,7 @@ $(document).ready(function() {
                         $viewArgs = [
                             'title' => xl('Vitals'),
                             'id' => $id,
-                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? false : true,
+                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
                             'btnLabel' => 'Trend',
                             'btnLink' => "../encounter/trend_form.php?formname=vitals&context=dashboard",
                             'linkMethod' => 'html',
@@ -1453,7 +1619,7 @@ $(document).ready(function() {
                         $viewArgs = [
                             'title' => xl($gfrow['title']),
                             'id' => $vitals_form_id,
-                            'initiallyCollapsed' => getUserSetting($vitals_form_id) == true ? true : false,
+                            'initiallyCollapsed' => (getUserSetting($vitals_form_id) == 0) ? true : false,
                             'btnLabel' => 'Trend',
                             'btnLink' => "../encounter/trend_form.php?formname=vitals&context=dashboard",
                             'linkMethod' => 'html',
@@ -1469,8 +1635,18 @@ $(document).ready(function() {
                 <div class="col-md-4">
                     <!-- start right column div -->
                     <?php
-                    // it's important enough to always show it
-                    $portalCard = new PortalCard($GLOBALS);
+                    $_extAccess = [
+                        $GLOBALS['portal_onsite_two_enable'],
+                        $GLOBALS['rest_fhir_api'],
+                        $GLOBALS['rest_api'],
+                        $GLOBALS['rest_portal_api'],
+                    ];
+                    foreach ($_extAccess as $_) {
+                        if ($_) {
+                            $portalCard = new PortalCard($GLOBALS);
+                            break;
+                        }
+                    }
 
                     $sectionRenderEvents = $ed->dispatch(new SectionEvent('secondary'), SectionEvent::EVENT_HANDLE);
                     $sectionCards = $sectionRenderEvents->getCards();
@@ -1497,7 +1673,7 @@ $(document).ready(function() {
                             'id' => $card->getIdentifier() . "_expand",
                             'auth' => $auth,
                             'linkMethod' => 'html',
-                            'initiallyCollapsed' => !$card->isInitiallyCollapsed(),
+                            'initiallyCollapsed' => $card->isInitiallyCollapsed(),
                             'card_bg_color' => $card->getBackgroundColorClass(),
                             'card_text_color' => $card->getTextColorClass(),
                             'forceAlwaysOpen' => !$card->canCollapse(),
@@ -1505,7 +1681,7 @@ $(document).ready(function() {
                             'btnLink' => "javascript:$('#patient_portal').collapse('toggle')",
                         ];
 
-                        echo $t->render($card->getTemplateFile(), array_merge($card->getTemplateVariables(), $viewArgs));
+                        echo $t->render($card->getTemplateFile(), array_merge($viewArgs, $card->getTemplateVariables()));
                     }
 
                     if ($GLOBALS['erx_enable']) :
@@ -1524,7 +1700,7 @@ $(document).ready(function() {
                         $viewArgs = [
                             'title' => xl("ID Card / Photos"),
                             'id' => $id,
-                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? false : true,
+                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
                             'btnLabel' => 'Edit',
                             'linkMethod' => "javascript",
                             'bodyClass' => 'collapse show',
@@ -1587,7 +1763,7 @@ $(document).ready(function() {
                             $viewArgs = [
                                 'title' => xl("Advance Directives"),
                                 'id' => $id,
-                                'initiallyCollapsed' => (getUserSetting($id) == 0) ? false : true,
+                                'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
                                 'btnLabel' => 'Edit',
                                 'linkMethod' => "javascript",
                                 'btnLink' => "return advdirconfigure();",
@@ -1613,7 +1789,7 @@ $(document).ready(function() {
                         $viewArgs = [
                             'title' => xl("Clinical Reminders"),
                             'id' => $id,
-                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? false : true,
+                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
                             'btnLabel' => "Edit",
                             'btnLink' => "../reminder/clinical_reminders.php?patient_id=" . attr_url($pid),
                             'linkMethod' => "html",
@@ -1776,6 +1952,7 @@ $(document).ready(function() {
                             // Show Recall if one exists
                             $query = sqlStatement("SELECT * FROM `medex_recalls` WHERE `r_pid` = ?", [(int)$pid]);
                             $recallArr = [];
+                            $count2 = 0;
                             while ($result2 = sqlFetchArray($query)) {
                                 //tabYourIt('recall', 'main/messages/messages.php?go=' + choice);
                                 //parent.left_nav.loadFrame('1', tabNAME, url);
@@ -1790,7 +1967,7 @@ $(document).ready(function() {
                             echo $twig->getTwig()->render('patient/card/recall.html.twig', [
                                 'title' => xl('Recall'),
                                 'id' => $id,
-                                'initiallyCollapsed' => (getUserSetting($id) == 0) ? false : true,
+                                'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
                                 'recalls' => $recallArr,
                                 'recallsAvailable' => ($count < 1 && empty($count2)) ? false : true,
                                 'prependedInjection' => $dispatchResult->getPrependedInjection(),
@@ -1878,7 +2055,7 @@ $(document).ready(function() {
                     echo $twig->getTwig()->render('patient/card/appointments.html.twig', [
                         'title' => xl("Appointments"),
                         'id' => $id,
-                        'initiallyCollapsed' => (getUserSetting($id) == 0) ? false : true,
+                        'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
                         'btnLabel' => "Add",
                         'btnLink' => "return newEvt()",
                         'linkMethod' => "javascript",
@@ -1910,7 +2087,7 @@ $(document).ready(function() {
                         echo $twig->getTwig()->render('patient/card/loader.html.twig', [
                             'title' => xl("Tracks"),
                             'id' => $id,
-                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? false : true,
+                            'initiallyCollapsed' => (getUserSetting($id) == 0) ? true : false,
                             'btnLink' => "../../forms/track_anything/create.php",
                             'linkMethod' => "html",
                             'prependedInjection' => $dispatchResult->getPrependedInjection(),
@@ -1950,36 +2127,6 @@ $(document).ready(function() {
                     $("#eligibility").get(0).scrollIntoView();
                 }
             });
-            
-            $("#patient_active_button").click(function(){
-                var pid='<?php echo $_SESSION['pid'];?>';
-                var status=$(this).val();
-                var success_status='';
-                if(status=='active'){
-                    success_status='inactive';
-                }
-                else{
-                    success_status='active';
-                }
-                $.ajax({
-                    type: "POST",
-                    url: "./demographics.php?change_patient_status",                    
-                    data: {
-                        patient_status: status,
-                        pid:pid
-                    },
-                    async: false,
-                    success: function(response) {
-                        $("#patient_active_button").text(response);
-                        $("#patient_active_button").val(success_status);
-                    },
-                    error: function() {
-                        alert('ajax error');
-                    }
-                });
-            });    
-              
-           
         </script>
 </body>
 <?php $ed->dispatch(new RenderEvent($pid), RenderEvent::EVENT_RENDER_POST_PAGELOAD, 10); ?>

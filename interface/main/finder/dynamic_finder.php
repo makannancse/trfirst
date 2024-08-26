@@ -22,19 +22,46 @@ require_once "$srcdir/options.inc.php";
 
 use OpenEMR\Common\Acl\AclMain;
 use OpenEMR\Common\Csrf\CsrfUtils;
-use OpenEMR\Common\Twig\TwigContainer;
 use OpenEMR\Core\Header;
-use OpenEMR\Events\UserInterface\PageHeadingRenderEvent;
-use OpenEMR\Menu\BaseMenuItem;
 use OpenEMR\OeUI\OemrUI;
-use Symfony\Component\EventDispatcher\EventDispatcher;
-use OpenEMR\Services\PatientService;
 
+if (isset($_GET['ehr'])) {
+    $dummy_data = [
+        ['id' => '6' ,'fname' => 'admin', 'lname' => 'Test','DOB' => '1999-04-07'],
+        ['id' => '1' ,'fname' => 'John', 'lname' => 'Aadhi','DOB' => '1999-04-07'],
+        ['id' => '2' ,'fname' => 'Jane', 'lname' => 'Doe','DOB' => '1997-01-17'],
+        ['id' => '3' , 'fname' => 'Tom', 'lname' => 'Smith','DOB' => '1999-02-07'],
+        ['id' => '4' , 'fname' => 'Alice', 'lname' => 'Johnson','DOB' => '1996-06-07'],
+        ['id' => '5' , 'fname' => 'Bob', 'lname' => 'Davis','DOB' => '1999-04-07']
+    ];
+        foreach ($dummy_data as $data) {
+        $pid = $data['id'];
+        $fname = $data['fname'];
+        $lname = $data['lname'];
+        $dob = $data['DOB'];
+        $query = "INSERT INTO `patient_data` (
+            `id`,`uuid`, `title`,`fname`, `lname`,`DOB`,`street`,`pubpid`,pid
+        ) VALUES (
+            $pid,NULL,'Mr', '$fname', '$lname','$dob','123,CALIFORNIA',$pid,$pid
+        )";
+        sqlQuery($query);  
+    }
+    
+    exit;
+}
+
+
+
+
+$login_user_id=$_SESSION['authUserID'] ? $_SESSION['authUserID'] : 0;
+$admin_query1=sqlQuery("SELECT users.id,users.username,gacl_aro_groups.name FROM users join gacl_aro on gacl_aro.value=users.username join gacl_groups_aro_map on gacl_groups_aro_map.aro_id=gacl_aro.id join gacl_aro_groups on gacl_aro_groups.id=gacl_groups_aro_map.group_id WHERE users.id=".$login_user_id."");
+$role=isset($admin_query1['name'])?$admin_query1['name']:'';
 $uspfx = 'patient_finder.'; //substr(__FILE__, strlen($webserver_root)) . '.';
 $patient_finder_exact_search = prevSetting($uspfx, 'patient_finder_exact_search', 'patient_finder_exact_search', ' ');
 
 $popup = empty($_REQUEST['popup']) ? 0 : 1;
 $searchAny = empty($_GET['search_any']) ? "" : $_GET['search_any'];
+$patient_type=isset($_GET['patient_type'])?$_GET['patient_type']:'active';
 unset($_GET['search_any']);
 // Generate some code based on the list of columns.
 //
@@ -43,7 +70,8 @@ $header0 = "";
 $header = "";
 $coljson = "";
 $orderjson = "";
-$res = sqlStatement("SELECT option_id, title, toggle_setting_1 FROM list_options WHERE list_id = 'ptlistcols' AND activity = 1 ORDER BY seq, title");
+$res = sqlStatement("SELECT option_id, title, toggle_setting_1 FROM list_options WHERE " .
+    "list_id = 'ptlistcols' AND activity = 1 ORDER BY seq, title");
 $sort_dir_map = generate_list_map('Sort_Direction');
 while ($row = sqlFetchArray($res)) {
     $colname = $row['option_id'];
@@ -70,14 +98,21 @@ while ($row = sqlFetchArray($res)) {
     $orderjson .= "[\"$colcount\", \"" . addcslashes($colorder, "\t\r\n\"\\") . "\"]";
     ++$colcount;
 }
-$loading = "";
+$loading = "<div class='spinner-border' role='status'><span class='sr-only'>" . xlt("Loading") . "...</span></div>";
 ?>
 <!DOCTYPE html>
 <html>
 <head>
     <?php Header::setupHeader(['datatables', 'datatables-colreorder', 'datatables-dt', 'datatables-bs']); ?>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <title><?php echo xlt("Patient Finder"); ?></title>
 <style>
+    .custom-popup {
+        width: 350px; /* Set the desired width */
+        height: 290px; /* Adjust height automatically */
+      
+    }
     /* Finder Processing style */
     div.dataTables_wrapper div.dataTables_processing {
         width: auto;
@@ -247,6 +282,16 @@ $loading = "";
     table thead .sorting::after {
         display: none !important;
     }
+    .active_patient{
+        color: black;
+        text-decoration: none;
+    }
+    .active_list{
+        width: 85%;
+        padding: 20px;
+        height: 57px;
+        font-weight: 500;
+    }
 </style>
 <script>
     var uspfx = '<?php echo attr($uspfx); ?>';
@@ -254,10 +299,11 @@ $loading = "";
     $(function () {
         // Initializing the DataTable.
         //
-        let serverUrl = "dynamic_finder_ajax.php";
+        let patient_type='<?php echo $patient_type;?>';
+        let serverUrl = "dynamic_finder_ajax.php?patient_type="+patient_type+"&";
         let srcAny = <?php echo js_url($searchAny); ?>;
         if (srcAny) {
-            serverUrl += "?search_any=" + srcAny;
+            serverUrl += "search_any=" + srcAny;
         }
         var oTable = $('#pt_table').dataTable({
             "processing": true,
@@ -355,8 +401,6 @@ $loading = "";
 
 </script>
 <?php
-    /** @var EventDispatcher */
-    $eventDispatcher = $GLOBALS['kernel']->getEventDispatcher();
     $arrOeUiSettings = array(
     'heading_title' => xl('Patient Finder'),
     'include_patient_name' => false,
@@ -366,58 +410,159 @@ $loading = "";
     'action_title' => "",//only for action link, leave empty for conceal, reveal, search
     'action_href' => "",//only for actions - reset, link or back
     'show_help_icon' => false,
-    'help_file_name' => "",
-    'page_id' => 'dynamic_finder',
+    'help_file_name' => ""
     );
     $oemr_ui = new OemrUI($arrOeUiSettings);
+    $sql1="SELECT COUNT(id) AS count FROM patient_data WHERE patient_status='active'";
+    if($role!='Administrators')
+    {
+        $sql1.=" AND providerID=".$login_user_id."";
+    }
+    $active_pat_count_arr=sqlQuery($sql1);
+    $active_pat_count=isset($active_pat_count_arr['count'])?$active_pat_count_arr['count']:0;
 
-    $eventDispatcher->addListener(PageHeadingRenderEvent::EVENT_PAGE_HEADING_RENDER, function ($event) {
-        if ($event->getPageId() !== 'dynamic_finder') {
-            return;
-        }
+    $sql2="SELECT COUNT(id) AS count FROM patient_data WHERE patient_status='inactive'";
+    if($role!='Administrators')
+    {
+        $sql2.=" AND providerID=".$login_user_id."";
+    }    
+    $inactive_pat_count_arr=sqlQuery($sql2);
+    $inactive_pat_count=isset($inactive_pat_count_arr['count'])?$inactive_pat_count_arr['count']:0;
 
-        $event->setPrimaryMenuItem(new BaseMenuItem([
-            'displayText' => xl('Add New Patient'),
-            'linkClassList' => ['btn-add'],
-            'id' => $GLOBALS['webroot'] . '/interface/new/new.php',
-            'acl' => ['patients', 'demo', ['write', 'addonly']]
-        ]));
-    });
     ?>
 </head>
 <body>
-<?php
+    <div id="container_div" class="<?php echo attr($oemr_ui->oeContainer()); ?> mt-3">
+         <div class="w-100">
+            <div class='row'>
+                <div>
+                <?php echo $oemr_ui->pageHeading() . "\r\n"; ?>   
+                </div>
+                <div class="row active_list bg-light">
+                    <div><a href="?patient_type=active" class="active_patient" style='<?php if($patient_type=='active'){echo 'color:blue !important;';} ?>'><i class="fa fa-exclamation-circle" aria-hidden="true"></i>&nbsp;Active (<?php echo $active_pat_count;?>)</a></div>
+                    <div><a href="?patient_type=inactive" class="ml-3 active_patient" style='<?php if($patient_type=='inactive'){echo 'color:blue !important;';} ?>'><i class="fa fa-exclamation-circle" aria-hidden="true"></i>&nbsp;Inactive (<?php echo $inactive_pat_count;?>)</a></div>
+                </div>
+            </div>
+                    
+            <?php if (AclMain::aclCheckCore('patients', 'demo', '', array('write','addonly'))) { ?>
+                <button id="create_patient_btn1" class="btn btn-primary btn-add" onclick="top.restoreSession();top.RTop.location = '<?php echo $web_root ?>/interface/new/new.php'"><?php echo xlt('Add New Patient'); ?></button>
+                <button  class="btn btn-primary" id="connect"><?php echo xlt('Connect EHR'); ?></button>
+            <?php } ?>
+            
+            <div>
+                <div id="dynamic"><!-- TBD: id seems unused, is this div required? -->
+                    <!-- Class "display" is defined in demo_table.css -->
+                    <div class="table-responsive">
+                        <table class="table" class="border-0 display" id="pt_table">
+                            <thead class="thead-dark">
+                                <tr id="advanced_search" class="hideaway d-none">
+                                    <?php echo $header0; ?>
+                                </tr>
+                                <tr class="">
+                                    <?php echo $header; ?>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <!-- Class "dataTables_empty" is defined in jquery.dataTables.css -->
+                                    <td class="dataTables_empty" colspan="<?php echo attr($colcount); ?>">...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+          </div>
+        </div>
+        <!-- form used to open a new top level window when a patient row is clicked -->
+        <form name='fnew' method='post' target='_blank' action='../main_screen.php?auth=login&site=<?php echo attr_url($_SESSION['site_id']); ?>'>
+            <input type="hidden" name="csrf_token_form" value="<?php echo attr(CsrfUtils::collectCsrfToken()); ?>" />
+            <input type='hidden' name='patientID' value='0'/>
+        </form>
+    </div> <!--End of Container div-->
+    <?php $oemr_ui->oeBelowContainerDiv();?>
 
-function rp()
-{
-    $sql = "SELECT option_id, title FROM list_options WHERE list_id = 'recent_patient_columns' AND activity = '1' ORDER BY seq ASC";
-    $res = sqlStatement($sql);
-    $headers = [];
-    while ($row = sqlFetchArray($res)) {
-        $headers[] = $row;
-    }
-    $patientService = new PatientService();
-    $rp = $patientService->getRecentPatientList();
-    return ['headers' => $headers, 'rp' => $rp];
-}
+    <script>
+        $(function () {
+            $("#exp_cont_icon").click(function () {
+                $("#pt_table").removeAttr("style");
+            });
+        });
 
-$rp = rp();
+        $(window).on("resize", function() { //portrait vs landscape
+           $("#pt_table").removeAttr("style");
+        });
+    </script>
+    <script>
+      $(function() {
+        $("#pt_table_filter").addClass("d-md-initial");
+        $("#pt_table_length").addClass("d-md-initial");
+        $("#show_hide").addClass("d-md-initial");
+        $("#search_hide").addClass("d-md-initial");
+        $("#pt_table_length").addClass("d-none");
+        $("#show_hide").addClass("d-none");
+        $("#search_hide").addClass("d-none");
+      });
+    </script>
 
-$templateVars = [
-    'oeContainer' => $oemr_ui->oeContainer(),
-    'oeBelowContainerDiv' => $oemr_ui->oeBelowContainerDiv(),
-    'pageHeading' => $oemr_ui->pageHeading(),
-    'header0' => $header0,
-    'header' => $header,
-    'colcount' => $colcount,
-    'headers' => $rp['headers'],
-    'rp' => $rp['rp'],
-];
+    <script>
+        document.addEventListener('touchstart', {});
+    </script>
 
-$twig = new TwigContainer(null, $GLOBALS['kernel']);
-$t = $twig->getTwig();
-echo $t->render('patient_finder/finder.html.twig', $templateVars);
+    <script>
+        $(function() {
+            $('div.dataTables_filter input').focus();
+        });
+    </script>
+  <script>
+$(document).ready(function() {
+    $('#connect').click(function() {
+        Swal.fire({
+            text: 'Five patient records found',
+            icon: 'info',
+            confirmButtonText: 'OK',
+            customClass: {
+            confirmButton: 'btn btn-primary' 
+            },
+            allowOutsideClick: false, 
+            allowEscapeKey: false,   
+        }).then(() => {
+            $.ajax({
+                url: 'dynamic_finder.php?ehr',
+                type: 'POST',
+                success: function(response) {
+                    // Show SweetAlert2 popup for success
+                    Swal.fire({
+                        title: 'Success',
+                        text: 'Patient data inserted successfully',
+                        icon: 'success',
+                        customClass: {
+                        confirmButton: 'btn btn-primary' 
+                        },
+                         allowOutsideClick: false, 
+                         allowEscapeKey: false, 
+                    }).then(() => {
+                        location.reload(); // Reload the page after success
+                    });
+                },
+                error: function(xhr, status, error) {
+                    // Show SweetAlert2 popup for error
+                    Swal.fire({
+                        title: 'Error',
+                        text: 'Error inserting patient data: ' + error,
+                        icon: 'error',
+                        customClass: {
+                        confirmButton: 'btn btn-primary' 
+                        }
+                    });
+                }
+            });
+        });
+    });
+});
 
-?>
+
+</script>
+
 </body>
 </html>

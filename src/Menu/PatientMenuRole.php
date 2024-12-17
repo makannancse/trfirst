@@ -199,6 +199,8 @@ class PatientMenuRole extends MenuRole
         EOT;
         echo $str_top . "\r\n";
         foreach ($menu_restrictions as $key => $value) {
+            // print_r($key . ' => ' . print_r($value, true));
+            if(in_array($value->menu_id, ['transactions','ledger'])) continue;
             if (!empty($value->children)) {
                 // create dropdown if there are children (bootstrap3 horizontal nav bar with dropdown)
                 $class = isset($value->class) ? $value->class : '';
@@ -222,6 +224,7 @@ class PatientMenuRole extends MenuRole
             echo $list . "\r\n";
             $li_id++;
         }
+        // die();
         $str_bot = <<<EOB
                 </ul>
             </div>

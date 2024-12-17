@@ -32,28 +32,73 @@ use OpenEMR\Services\PatientService;
 
 if (isset($_GET['ehr'])) {
     $dummy_data = [
-        ['id' => '6' ,'fname' => 'admin', 'lname' => 'Test','DOB' => '1999-04-07'],
-        ['id' => '1' ,'fname' => 'John', 'lname' => 'Aadhi','DOB' => '1999-04-07'],
-        ['id' => '2' ,'fname' => 'Jane', 'lname' => 'Doe','DOB' => '1997-01-17'],
-        ['id' => '3' , 'fname' => 'Tom', 'lname' => 'Smith','DOB' => '1999-02-07'],
-        ['id' => '4' , 'fname' => 'Alice', 'lname' => 'Johnson','DOB' => '1996-06-07'],
-        ['id' => '5' , 'fname' => 'Bob', 'lname' => 'Davis','DOB' => '1999-04-07']
+        ['id' => '1', 'fname' => 'John', 'lname' => 'Aadhi', 'DOB' => '1999-04-07', 'eligible' => '1'],
+        ['id' => '2', 'fname' => 'Jane', 'lname' => 'Doe', 'DOB' => '1997-01-17', 'eligible' => '1'],
+        ['id' => '3', 'fname' => 'Tom', 'lname' => 'Smith', 'DOB' => '1999-02-07', 'eligible' => '0'],
+        ['id' => '4', 'fname' => 'Alice', 'lname' => 'Johnson', 'DOB' => '1996-06-07', 'eligible' => '0'],
+        ['id' => '5', 'fname' => 'Bob', 'lname' => 'Davis', 'DOB' => '1999-04-07', 'eligible' => '0'],
+        ['id' => '6', 'fname' => 'Admin', 'lname' => 'Test', 'DOB' => '1999-04-07', 'eligible' => '1'],
+        ['id' => '7', 'fname' => 'Mary', 'lname' => 'Brown', 'DOB' => '2000-07-01', 'eligible' => '1'],
+        ['id' => '8', 'fname' => 'Chris', 'lname' => 'White', 'DOB' => '1995-09-12', 'eligible' => '1'],
+        ['id' => '9', 'fname' => 'Sarah', 'lname' => 'Davis', 'DOB' => '1998-02-25', 'eligible' => '0'],
+        ['id' => '10', 'fname' => 'Michael', 'lname' => 'Wilson', 'DOB' => '1997-08-15', 'eligible' => '1'],
+        ['id' => '11', 'fname' => 'David', 'lname' => 'Miller', 'DOB' => '1996-10-10', 'eligible' => '0'],
+        ['id' => '12', 'fname' => 'Emma', 'lname' => 'Garcia', 'DOB' => '1999-05-20', 'eligible' => '1'],
+        ['id' => '13', 'fname' => 'Daniel', 'lname' => 'Martinez', 'DOB' => '1997-04-18', 'eligible' => '0'],
+        ['id' => '14', 'fname' => 'Olivia', 'lname' => 'Hernandez', 'DOB' => '1998-11-05', 'eligible' => '1'],
+        ['id' => '15', 'fname' => 'Lucas', 'lname' => 'Lopez', 'DOB' => '2000-12-01', 'eligible' => '1'],
+        ['id' => '16', 'fname' => 'Sophia', 'lname' => 'Gonzalez', 'DOB' => '1996-03-12', 'eligible' => '0'],
+        ['id' => '17', 'fname' => 'James', 'lname' => 'Perez', 'DOB' => '1995-07-24', 'eligible' => '1'],
+        ['id' => '18', 'fname' => 'Isabella', 'lname' => 'Jackson', 'DOB' => '1999-02-17', 'eligible' => '1'],
+        ['id' => '19', 'fname' => 'Benjamin', 'lname' => 'Sanchez', 'DOB' => '2001-09-09', 'eligible' => '0'],
+        ['id' => '20', 'fname' => 'Charlotte', 'lname' => 'Clark', 'DOB' => '1998-12-22', 'eligible' => '0']
     ];
-        foreach ($dummy_data as $data) {
+    
+
+    // Assuming sqlQuery is a function to execute the query
+    foreach ($dummy_data as $data) {
         $pid = $data['id'];
         $fname = $data['fname'];
         $lname = $data['lname'];
         $dob = $data['DOB'];
+        $eligible = $data['eligible'];
+
+        // Correct the SQL query and avoid syntax issues
         $query = "INSERT INTO `patient_data` (
-            `id`,`uuid`, `title`,`fname`, `lname`,`DOB`,`street`,`pubpid`,pid
-        ) VALUES (
-            $pid,NULL,'Mr', '$fname', '$lname','$dob','123,CALIFORNIA',$pid,$pid
-        )";
+                    `id`, `uuid`, `title`, `fname`, `lname`, `DOB`, `street`, `pubpid`, `pid`, `eligible`
+                  ) VALUES (
+                    '$pid', NULL, 'Mr', '$fname', '$lname', '$dob', '123,CALIFORNIA', '$pid', '$pid', '$eligible'
+                  )";
+
+        // Run the query
         sqlQuery($query);  
     }
-    
+
     exit;
 }
+if(isset($_GET['eligible'])){
+
+    $eligiblePatients = [];
+    $result = sqlStatement("SELECT id, fname, lname, DOB FROM patient_data WHERE eligible = '1'");
+
+    // Iterate through the result set
+    while ($row = sqlFetchArray($result)) {
+        $eligiblePatients[] = [
+            'id' => $row['id'],
+            'fname' => $row['fname'],
+            'lname' => $row['lname'],
+            'DOB' => $row['DOB']
+        ];
+    }
+
+    // Return eligible patients as JSON
+    header('Content-Type: application/json');
+    echo json_encode($eligiblePatients);
+    exit;
+
+}
+
+
 
 $uspfx = 'patient_finder.'; //substr(__FILE__, strlen($webserver_root)) . '.';
 $patient_finder_exact_search = prevSetting($uspfx, 'patient_finder_exact_search', 'patient_finder_exact_search', ' ');
@@ -106,6 +151,16 @@ $loading = "";
     <title><?php echo xlt("Patient Finder"); ?></title>
 <style>
     /* Finder Processing style */
+        .btn-connect:before {
+        content: " ➠ ";
+        font-size: 20px !important;
+        line-height: 20px;
+       }
+       .elg-patient:before {
+        content: " ➠ ";
+        font-size: 20px !important;
+        line-height: 20px;
+       }
     div.dataTables_wrapper div.dataTables_processing {
         width: auto;
         margin: 0;
@@ -409,11 +464,23 @@ $loading = "";
             'id' => $GLOBALS['webroot'] . '/interface/new/new.php',
             'acl' => ['patients', 'demo', ['write', 'addonly']]
         ]));
+        $event->setPrimaryMenuItem(new BaseMenuItem([
+            'displayText' => xl('Connect EHR'),
+            'linkClassList' => ['btn-connect'],
+            'id' => '#',
+            'acl' => ['patients', 'demo', ['write', 'addonly']]
+        ]));
+        $event->setPrimaryMenuItem(new BaseMenuItem([
+            'displayText' => xl('Transmit Patient'),
+            'linkClassList' => ['elg-patient'],
+            'id' => '#',
+            'acl' => ['patients', 'demo', ['write', 'addonly']]
+        ]));
     });
     ?>
 </head>
 <body>
-<button style='margin:72px;margin-left:260px;position:absolute;'  class="btn btn-primary" id="connect"><?php echo xlt('Connect EHR'); ?></button>
+
 <?php
 
 function rp()
@@ -447,51 +514,253 @@ $t = $twig->getTwig();
 echo $t->render('patient_finder/finder.html.twig', $templateVars);
 
 ?>
-
- 
 </body>
 <script>
 $(document).ready(function() {
-    $('#connect').click(function() {
+    $('.btn-connect').click(function() {
         Swal.fire({
-            text: 'Five patient records found',
+            title: 'Patient records found',
+            text: 'Please select the practices you want to proceed with:',
             icon: 'info',
-            confirmButtonText: 'OK',
+            html: `
+                <input type="checkbox" id="optionA" name="options" value="A">
+                <label for="optionA">Practice A</label><br>
+                <input type="checkbox" id="optionB" name="options" value="B">
+                <label for="optionB">Practice B</label>
+            `,
+            showCancelButton: true,
+            confirmButtonText: 'Proceed',
+            cancelButtonText: 'Cancel',
             customClass: {
-            confirmButton: 'btn btn-primary' 
+                confirmButton: 'btn btn-primary',
+                cancelButton: 'btn btn-secondary'
+            },
+            preConfirm: () => {
+                // Get the selected options (checkboxes)
+                const selectedOptions = [];
+                $("input[name='options']:checked").each(function() {
+                    selectedOptions.push($(this).val());
+                });
+                return { selectedOptions: selectedOptions };
             }
-        }).then(() => {
-            $.ajax({
-                url: 'dynamic_finder.php?ehr',
-                type: 'POST',
-                success: function(response) {
-                    // Show SweetAlert2 popup for success
+        }).then((result) => {
+            if (result.isConfirmed) {
+                const selectedOptions = result.value.selectedOptions;
+
+                // Check if both Practice A and Practice B are selected
+                if (selectedOptions.includes("A") && selectedOptions.includes("B")) {
                     Swal.fire({
-                        title: 'Success',
-                        text: 'Patient data inserted successfully',
+                        title: 'Both Practices Selected',
+                        text: 'Proceeding with both Practice A and Practice B...',
+                        icon: 'info',
+                        customClass: {
+                            confirmButton: 'btn btn-primary'
+                        }
+                    }).then(() => {
+                        // Perform Ajax for both Practice A and Practice B
+                        $.ajax({
+                            url: 'dynamic_finder.php?ehr',
+                            type: 'POST',
+                            success: function(response) {
+                                Swal.fire({
+                                    title: 'Success',
+                                    text: 'Patient data inserted successfully for both practices',
+                                    icon: 'success',
+                                    customClass: {
+                                        confirmButton: 'btn btn-primary'
+                                    }
+                                }).then(() => {
+                                    location.reload(); // Reload the page after success
+                                });
+                            },
+                            error: function(xhr, status, error) {
+                                Swal.fire({
+                                    title: 'Error',
+                                    text: 'Error inserting patient data for both practices: ' + error,
+                                    icon: 'error',
+                                    customClass: {
+                                        confirmButton: 'btn btn-primary'
+                                    }
+                                });
+                            }
+                        });
+                    });
+                }
+
+                // Check if Practice A is selected
+                else if (selectedOptions.includes("A")) {
+                    Swal.fire({
+                        title: 'Practice A Selected',
+                        text: 'Proceeding with Practice A...',
                         icon: 'success',
                         customClass: {
-                        confirmButton: 'btn btn-primary' 
+                            confirmButton: 'btn btn-primary'
                         }
-                        
                     }).then(() => {
-                        location.reload(); // Reload the page after success
+                        // Perform Ajax for Practice A
+                        $.ajax({
+                            url: 'dynamic_finder.php?ehr',
+                            type: 'POST',
+                            success: function(response) {
+                                Swal.fire({
+                                    title: 'Success',
+                                    text: 'Patient data inserted successfully for Practice A',
+                                    icon: 'success',
+                                    customClass: {
+                                        confirmButton: 'btn btn-primary'
+                                    }
+                                }).then(() => {
+                                    location.reload(); // Reload the page after success
+                                });
+                            },
+                            error: function(xhr, status, error) {
+                                Swal.fire({
+                                    title: 'Error',
+                                    text: 'Error inserting patient data for Practice A: ' + error,
+                                    icon: 'error',
+                                    customClass: {
+                                        confirmButton: 'btn btn-primary'
+                                    }
+                                });
+                            }
+                        });
                     });
-                },
-                error: function(xhr, status, error) {
-                    // Show SweetAlert2 popup for error
+                }
+
+                // Check if Practice B is selected
+                else if (selectedOptions.includes("B")) {
                     Swal.fire({
-                        title: 'Error',
-                        text: 'Error inserting patient data: ' + error,
-                        icon: 'error',
+                        title: 'Practice B Selected',
+                        text: 'Proceeding with Practice B...',
+                        icon: 'warning',
                         customClass: {
-                        confirmButton: 'btn btn-primary' 
+                            confirmButton: 'btn btn-primary'
+                        }
+                    }).then(() => {
+                        // Perform Ajax for Practice B
+                        $.ajax({
+                            url: 'dynamic_finder.php?ehr',
+                            type: 'POST',
+                            success: function(response) {
+                                Swal.fire({
+                                    title: 'Success',
+                                    text: 'Patient data inserted successfully for Practice B',
+                                    icon: 'success',
+                                    customClass: {
+                                        confirmButton: 'btn btn-primary'
+                                    }
+                                }).then(() => {
+                                    location.reload(); // Reload the page after success
+                                });
+                            },
+                            error: function(xhr, status, error) {
+                                Swal.fire({
+                                    title: 'Error',
+                                    text: 'Error inserting patient data for Practice B: ' + error,
+                                    icon: 'error',
+                                    customClass: {
+                                        confirmButton: 'btn btn-primary'
+                                    }
+                                });
+                            }
+                        });
+                    });
+                }
+
+                // If no options selected
+                if (selectedOptions.length === 0) {
+                    Swal.fire({
+                        title: 'No Option Selected',
+                        text: 'Please select at least one option to proceed.',
+                        icon: 'info',
+                        customClass: {
+                            confirmButton: 'btn btn-primary'
                         }
                     });
                 }
-            });
+            } else {
+                Swal.fire({
+                    title: 'Action Canceled',
+                    text: 'You canceled the action.',
+                    icon: 'error',
+                    customClass: {
+                        confirmButton: 'btn btn-primary'
+                    }
+                });
+            }
         });
     });
 });
+
+
+
+$(document).ready(function () {
+    // Event for "Eligible Patient" button
+    $('.elg-patient').click(function () {
+        $.ajax({
+            url: 'dynamic_finder.php?eligible', // Endpoint to fetch eligible patients
+            type: 'GET',
+            dataType: 'json', // Expecting JSON response
+            success: function (response) {
+                let patientTable = '<table class="table table-bordered"><thead><tr><th>Name</th><th>DOB</th><th>External ID</th></tr></thead><tbody>';
+                response.forEach(function(patient) {
+                    patientTable += `<tr><td>${patient.lname},${patient.fname}</td><td>${patient.DOB}</td><td>${patient.id}</td></tr>`;
+                });
+                patientTable += '</tbody></table>';
+
+                // Show SweetAlert2 popup with the patient table
+                Swal.fire({
+                    title: 'Transmit Patients',
+                    html: patientTable, // Display the table as HTML
+                    confirmButtonText: 'Transmit',
+                    customClass: {
+                        confirmButton: 'btn btn-primary'
+                    }
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        $.ajax({
+                            url: 'dynamic_finder.php?transmit', // Endpoint to handle transmission
+                            type: 'POST',
+                            success: function (response) {
+                                // Show success message for transmission
+                                Swal.fire({
+                                    title: 'Success',
+                                    text: 'Patient Data successfully transmitted to the transplant center!',
+                                    icon: 'success',
+                                    customClass: {
+                                        confirmButton: 'btn btn-primary'
+                                    }
+                                });
+                            },
+                            error: function (xhr, status, error) {
+                                // Handle error during transmission
+                                Swal.fire({
+                                    title: 'Error',
+                                    text: 'Failed to transmit data: ' + error,
+                                    icon: 'error',
+                                    customClass: {
+                                        confirmButton: 'btn btn-primary'
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
+            },
+            error: function () {
+                // Handle error case
+                Swal.fire({
+                    title: 'Error',
+                    text: 'Unable to fetch eligible patients.',
+                    icon: 'error',
+                    customClass: {
+                        confirmButton: 'btn btn-primary'
+                    }
+                });
+            }
+        });
+    });
+});
+
 </script>
 </html>

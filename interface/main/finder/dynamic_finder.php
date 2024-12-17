@@ -30,6 +30,7 @@ use OpenEMR\OeUI\OemrUI;
 use Symfony\Component\EventDispatcher\EventDispatcher;
 use OpenEMR\Services\PatientService;
 
+
 if (isset($_GET['ehr'])) {
     $dummy_data = [
         ['id' => '1', 'fname' => 'John', 'lname' => 'Aadhi', 'DOB' => '1999-04-07', 'eligible' => '1'],
